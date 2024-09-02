@@ -1,0 +1,123 @@
+#include "loader.h"
+
+Elf32_Ehdr *ehdr = NULL;
+Elf32_Phdr *phdr = NULL;
+int fd;
+void *segment_memory = NULL;
+void loader_cleanup() {
+    if (fd != -1){    
+       close(fd);
+       }
+    free(ehdr);
+    free(phdr);  
+}
+
+void load_and_run_elf(char** exe) {
+  fd = open(exe[1], O_RDONLY);
+  if (fd == -1) {
+        printf("Error opening file");
+        return;
+    }
+    
+  ehdr = (Elf32_Ehdr *)malloc(sizeof(Elf32_Ehdr));
+   if (ehdr == NULL) {
+        printf("Memory allocation error");
+  }
+
+    ssize_t bytesRead = read(fd, ehdr, sizeof(Elf32_Ehdr));
+    if (bytesRead != sizeof(Elf32_Ehdr)) {
+        printf("Error reading ELF header");
+        free(ehdr);
+        close(fd);
+        return;
+    }
+    
+    phdr = (Elf32_Phdr *)malloc(sizeof(Elf32_Phdr));
+
+    if (phdr == NULL) {
+        printf("Memory allocation error");
+        free(ehdr);
+        close(fd);
+        return;
+  }
+    ssize_t bytesRead1 = read(fd, phdr, sizeof(Elf32_Phdr));
+    if (bytesRead1 != sizeof(Elf32_Phdr)) {
+        printf("Error reading Program header");
+        free(ehdr);
+        free(phdr);
+        close(fd);
+        return;
+    }
+  
+   for (int i=0;i<ehdr->e_phnum;i++){
+    if (lseek(fd, ehdr->e_phoff+ i * ehdr->e_phentsize, SEEK_SET) == -1) {
+            printf("Error seeking to program header");
+            free(ehdr);
+            free(phdr);
+            close(fd);
+            return;
+        }
+
+    if (read(fd, phdr, ehdr -> e_phentsize) != sizeof(Elf32_Phdr)) {
+            printf("Error reading program header");
+            free(ehdr);
+            free(phdr);
+            close(fd);
+            return;
+        }
+        
+    if(phdr->p_type==PT_LOAD){
+	    if (ehdr->e_entry >= phdr->p_vaddr && ehdr->e_entry < phdr-> p_vaddr + phdr->p_memsz){
+                  break;}
+    }
+
+  }
+    Elf32_Addr segment_virtual_Address=phdr->p_vaddr;
+    
+    segment_memory = mmap(NULL, phdr->p_memsz, PROT_READ | PROT_WRITE | PROT_EXEC,
+                                MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
+
+    if (segment_memory == MAP_FAILED) {
+        printf("Memory mapping error");
+        free(ehdr);
+        free(phdr);
+        close(fd);
+        return;
+    }
+    if(lseek(fd, phdr->p_offset, SEEK_SET)==-1){
+      printf("Error seeking to Segment");
+
+      free(phdr);
+      free(phdr);
+      close(fd);
+      return;
+    }
+    if(read(fd, segment_memory, phdr->p_filesz)!=phdr->p_filesz){
+      printf("Error reading the segment");
+
+      free(ehdr);
+      free(phdr);
+      close(fd);
+      return;
+    }
+      
+    Elf32_Addr address = ehdr->e_entry - segment_virtual_Address;
+
+    int (*_start)()  = (int (*)()) (segment_memory + (address));
+ 
+  int result = _start();
+  printf("User _start return value = %d\n",result);
+}
+
+
+int main(int argc, char** argv) {
+
+  if(argc != 2) {
+    printf("Usage: %s <ELF Executable> \n",argv[0]);
+    exit(1);
+  }
+  
+  load_and_run_elf(argv);
+  loader_cleanup();
+  return 0;
+}
